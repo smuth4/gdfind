@@ -14,12 +14,12 @@ import log "github.com/sirupsen/logrus"
 
 func main() {
 	var minSize int64
-	var headBytes, tailBytes int
+	var headBytes, tailBytes int64
 	var sleepInt int
 	var ioSleep time.Duration
 	flag.Int64Var(&minSize, "minsize", 1, "Ignore files with less than N bytes")
-	flag.IntVar(&headBytes, "head-bytes", 64, "Read N bytes from the start of files")
-	flag.IntVar(&tailBytes, "tail-bytes", 64, "Read N bytes from the end of files")
+	flag.Int64Var(&headBytes, "head-bytes", 64, "Read N bytes from the start of files")
+	flag.Int64Var(&tailBytes, "tail-bytes", 64, "Read N bytes from the end of files")
 	flag.IntVar(&sleepInt, "sleep", 0, "Sleep N milliseconds between IO")
 	flag.Parse()
 	ioSleep = time.Duration(sleepInt) * time.Millisecond
@@ -118,6 +118,7 @@ func fullHashFiles(candidates []FileInfo) ([]FileInfo, error) {
 	var result []FileInfo
 	table := crc64.MakeTable(crc64.ECMA)
 	for _, f := range candidates {
+		// Check if we need to even do anythong
 		if f.fullHash != 0 {
 			continue
 		}
@@ -127,6 +128,7 @@ func fullHashFiles(candidates []FileInfo) ([]FileInfo, error) {
 		_, err = io.Copy(hasher, handle)
 		if err != nil {
 			f.Logger().Error(err)
+			continue
 		}
 		f.fullHash = hasher.Sum64()
 		result = append(result, f)
@@ -150,6 +152,10 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 		return nil, errors.New("Cannot read 0 bytes")
 	}
 	for _, f := range candidates {
+		// Check if we even need to do anything
+		if (byteLen > 0 && f.headBytesHash != 0) || (byteLen < 0 && f.tailBytesHash != 0) {
+			continue
+		}
 		time.Sleep(sleep)
 		readSize := abs(byteLen)
 		seek := int64(0)
