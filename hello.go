@@ -11,12 +11,14 @@ import "flag"
 import "hash/crc64"
 import "time"
 import log "github.com/sirupsen/logrus"
+import "github.com/cheggaaa/pb/v3"
 
 func main() {
 	var minSize int64
 	var headBytes, tailBytes int64
 	var sleepInt int
 	var ioSleep time.Duration
+	var err error
 	flag.Int64Var(&minSize, "minsize", 1, "Ignore files with less than N bytes")
 	flag.Int64Var(&headBytes, "head-bytes", 64, "Read N bytes from the start of files")
 	flag.Int64Var(&tailBytes, "tail-bytes", 64, "Read N bytes from the end of files")
@@ -49,10 +51,16 @@ func main() {
 	candidates, _ = smallHashFiles(candidates, headBytes, ioSleep)
 	candidates, _ = removeDuplicateHeadHash(candidates)
 	log.Info("Building tail hashes")
-	candidates, _ = smallHashFiles(candidates, tailBytes*-1, ioSleep)
-	candidates, _ = removeDuplicateTailHash(candidates)
+	candidates, err = smallHashFiles(candidates, tailBytes*-1, ioSleep)
+	if err != nil {
+		log.Fatal(err)
+	}
+	candidates, err = removeDuplicateTailHash(candidates)
+	if err != nil {
+		log.Fatal(err)
+	}
 	log.Info("Building full hashes")
-	candidates, _ = fullHashFiles(candidates)
+	candidates, _ = fullHashFiles(candidates, ioSleep)
 	hashCandidates := make(map[uint64][]FileInfo)
 	for _, f := range candidates {
 		hashCandidates[f.fullHash] = append(hashCandidates[f.fullHash], f)
@@ -84,16 +92,8 @@ func removeDuplicateHeadHash(candidates []FileInfo) ([]FileInfo, error) {
 			result = append(result, f)
 		}
 	}
-	totalSize := int64(0)
-	for _, f := range result {
-		totalSize += f.size
-	}
-	log.Infof("Found %d paths after unique head hash check, totalling %d bytes", len(result), totalSize)
+	log.Infof("Found %d paths after unique head hash check, totalling %d bytes", len(result), totalSize(result))
 	return result, nil
-}
-
-func (file FileInfo) Logger() *log.Entry {
-	return log.WithFields(log.Fields{"path": file.path})
 }
 
 func removeDuplicateTailHash(candidates []FileInfo) ([]FileInfo, error) {
@@ -114,18 +114,30 @@ func removeDuplicateTailHash(candidates []FileInfo) ([]FileInfo, error) {
 	return result, nil
 }
 
-func fullHashFiles(candidates []FileInfo) ([]FileInfo, error) {
+func (file FileInfo) Logger() *log.Entry {
+	return log.WithFields(log.Fields{"path": file.path})
+}
+
+func fullHashFiles(candidates []FileInfo, sleep time.Duration) ([]FileInfo, error) {
+	if len(candidates) == 0 {
+		return candidates, nil
+	}
 	var result []FileInfo
 	table := crc64.MakeTable(crc64.ECMA)
+	bar := pb.Start64(totalSize(candidates))
 	for _, f := range candidates {
 		// Check if we need to even do anythong
 		if f.fullHash != 0 {
+			result = append(result, f)
+			bar.Add64(f.size)
 			continue
 		}
+		time.Sleep(sleep)
 		hasher := crc64.New(table)
 		handle, err := os.Open(f.path)
 		defer handle.Close()
-		_, err = io.Copy(hasher, handle)
+		barReader := bar.NewProxyReader(handle)
+		_, err = io.Copy(hasher, barReader)
 		if err != nil {
 			f.Logger().Error(err)
 			continue
@@ -133,6 +145,7 @@ func fullHashFiles(candidates []FileInfo) ([]FileInfo, error) {
 		f.fullHash = hasher.Sum64()
 		result = append(result, f)
 	}
+	bar.Finish()
 	return result, nil
 }
 
@@ -146,14 +159,20 @@ func abs(x int64) int64 {
 func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) ([]FileInfo, error) {
 	// For byteLen, <0 means head, >0 means tail
 	// abs(byteLen) should always be small enough that fully creating the buffer is fine
+	if len(candidates) == 0 {
+		return candidates, nil
+	}
 	var result []FileInfo
+	bar := pb.StartNew(len(candidates))
 	table := crc64.MakeTable(crc64.ECMA)
 	if byteLen == 0 {
 		return nil, errors.New("Cannot read 0 bytes")
 	}
 	for _, f := range candidates {
 		// Check if we even need to do anything
+		bar.Increment()
 		if (byteLen > 0 && f.headBytesHash != 0) || (byteLen < 0 && f.tailBytesHash != 0) {
+			result = append(result, f)
 			continue
 		}
 		time.Sleep(sleep)
@@ -201,6 +220,7 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 		}
 		result = append(result, f)
 	}
+	bar.Finish()
 	return result, nil
 }
 
@@ -234,7 +254,6 @@ func removeUniqueSizes(candidates []FileInfo) ([]FileInfo, error) {
 	for _, f := range candidates {
 		countSizes[f.size]++
 	}
-	var uniqueSizePaths []FileInfo
 	for _, f := range candidates {
 		if countSizes[f.size] == 1 {
 			f.Logger().Debug("Skipping due to unique size")
@@ -242,7 +261,7 @@ func removeUniqueSizes(candidates []FileInfo) ([]FileInfo, error) {
 			result = append(result, f)
 		}
 	}
-	log.Infof("Found %d paths after unique size check, totalling %d bytes", len(uniqueSizePaths), totalSize(result))
+	log.Infof("Found %d paths after unique size check, totalling %d bytes", len(result), totalSize(result))
 	return result, nil
 }
 
