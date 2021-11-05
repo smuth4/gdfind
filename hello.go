@@ -23,9 +23,7 @@ func main() {
 	flag.IntVar(&tailBytes, "tail-bytes", 64, "Read N bytes from the end of files")
 	flag.IntVar(&sleepInt, "sleep", 0, "Sleep N milliseconds between IO")
 	flag.Parse()
-	log.Println(sleepInt)
 	ioSleep = time.Duration(sleepInt) * time.Millisecond
-	log.Println(sleepInt)
 	if flag.NArg() == 0 {
 		flag.Usage()
 		log.Fatal("No paths provided")
@@ -282,7 +280,7 @@ func scanDir(path string, minSize int64, sleep time.Duration) ([]FileInfo, error
 		})
 	log.Debugf("Scanned %d entries", totalScanned)
 	if err != nil {
-		fmt.Println(err)
+		log.Error(err)
 		return nil, err
 	}
 	return acceptedPaths, nil
