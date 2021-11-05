@@ -3,6 +3,7 @@ package main
 import "errors"
 import "path/filepath"
 import "syscall"
+import "fmt"
 import "sort"
 import "io/fs"
 import "io"
@@ -16,34 +17,39 @@ import "github.com/cheggaaa/pb/v3"
 func main() {
 	var minSize int64
 	var headBytes, tailBytes int64
-	var sleepInt int
 	var ioSleep time.Duration
 	var err error
+	var logLevel string
 	flag.Int64Var(&minSize, "minsize", 1, "Ignore files with less than N bytes")
 	flag.Int64Var(&headBytes, "head-bytes", 64, "Read N bytes from the start of files")
 	flag.Int64Var(&tailBytes, "tail-bytes", 64, "Read N bytes from the end of files")
-	flag.IntVar(&sleepInt, "sleep", 0, "Sleep N milliseconds between IO")
+	flag.DurationVar(&ioSleep, "sleep", time.Duration(0), "Sleep N milliseconds between IO")
+	flag.StringVar(&logLevel, "level", "info", "Level to use for logs")
+	switch logLevel {
+	case "warn":
+		log.SetLevel(log.WarnLevel)
+	case "debug":
+		log.SetLevel(log.DebugLevel)
+	case "info":
+		log.SetLevel(log.InfoLevel)
+	case "error":
+		log.SetLevel(log.ErrorLevel)
+	}
 	flag.Parse()
-	ioSleep = time.Duration(sleepInt) * time.Millisecond
 	if flag.NArg() == 0 {
 		flag.Usage()
 		log.Fatal("No paths provided")
 		os.Exit(1)
 	}
-	log.SetLevel(log.DebugLevel)
 
 	// Initial scan
-	var totalSize int64
-	candidates, _ := scanDir(flag.Arg(0), minSize, ioSleep)
-	for _, f := range candidates {
-		totalSize += f.size
-	}
-	log.Infof("Found %d paths, totalling %d bytes", len(candidates), totalSize)
+	candidates, _ := scanDir(flag.Arg(0), minSize, time.Duration(0))
+	log.Infof("Found %d paths, totalling %s", len(candidates), byteToHuman(totalSize(candidates)))
 	candidates, _ = removeUniqueSizes(candidates)
 	candidates, _ = removeDuplicateInodes(candidates)
 
 	// Sort by inode
-	log.Info("Sorting by inode")
+	log.Debug("Sorting by inode")
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].inode < candidates[j].inode
 	})
