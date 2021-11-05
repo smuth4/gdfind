@@ -1,6 +1,5 @@
 package main
 
-import "fmt"
 import "errors"
 import "path/filepath"
 import "syscall"
@@ -16,7 +15,7 @@ import log "github.com/sirupsen/logrus"
 func main() {
 	var minSize int64
 	var headBytes, tailBytes int
-        var sleepInt int
+	var sleepInt int
 	var ioSleep time.Duration
 	flag.Int64Var(&minSize, "minsize", 1, "Ignore files with less than N bytes")
 	flag.IntVar(&headBytes, "head-bytes", 64, "Read N bytes from the start of files")
@@ -152,7 +151,7 @@ func smallHashFiles(candidates []FileInfo, byteLen int, sleep time.Duration) ([]
 				readSize = byteLen
 			}
 		} else {
-			if f.size <= int64(byteLen) * -1 {
+			if f.size <= int64(byteLen)*-1 {
 				readSize = int(f.size)
 			} else {
 				readSize = byteLen * -1
