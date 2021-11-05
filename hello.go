@@ -78,6 +78,19 @@ func main() {
 	}
 }
 
+func byteToHuman(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
 func removeDuplicateHeadHash(candidates []FileInfo) ([]FileInfo, error) {
 	// Remove unique head hashes
 	var headHashCount = make(map[uint64]int)
@@ -92,7 +105,7 @@ func removeDuplicateHeadHash(candidates []FileInfo) ([]FileInfo, error) {
 			result = append(result, f)
 		}
 	}
-	log.Infof("Found %d paths after unique head hash check, totalling %d bytes", len(result), totalSize(result))
+	log.Infof("Found %d paths after unique head hash check, totalling %s", len(result), byteToHuman(totalSize(result)))
 	return result, nil
 }
 
@@ -110,7 +123,7 @@ func removeDuplicateTailHash(candidates []FileInfo) ([]FileInfo, error) {
 			result = append(result, f)
 		}
 	}
-	log.Infof("Found %d paths after unique tail hash check, totalling %d bytes", len(result), totalSize(result))
+	log.Infof("Found %d paths after unique tail hash check, totalling %s", len(result), byteToHuman(totalSize(result)))
 	return result, nil
 }
 
@@ -243,7 +256,7 @@ func removeDuplicateInodes(candidates []FileInfo) ([]FileInfo, error) {
 			result = append(result, f)
 		}
 	}
-	log.Infof("Found %d paths after duplicate inode check, totalling %d bytes", len(result), totalSize(result))
+	log.Infof("Found %d paths after duplicate inode check, totalling %s", len(result), byteToHuman(totalSize(result)))
 	return result, nil
 }
 
@@ -261,7 +274,7 @@ func removeUniqueSizes(candidates []FileInfo) ([]FileInfo, error) {
 			result = append(result, f)
 		}
 	}
-	log.Infof("Found %d paths after unique size check, totalling %d bytes", len(result), totalSize(result))
+	log.Infof("Found %d paths after unique size check, totalling %s", len(result), byteToHuman(totalSize(result)))
 	return result, nil
 }
 
