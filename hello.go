@@ -45,8 +45,10 @@ func main() {
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].inode < candidates[j].inode
 	})
+	log.Info("Building head hashes")
 	candidates, _ = smallHashFiles(candidates, headBytes, ioSleep)
 	candidates, _ = removeDuplicateHeadHash(candidates)
+	log.Info("Building tail hashes")
 	candidates, _ = smallHashFiles(candidates, tailBytes*-1, ioSleep)
 	candidates, _ = removeDuplicateTailHash(candidates)
 	log.Info("Building full hashes")
@@ -132,7 +134,14 @@ func fullHashFiles(candidates []FileInfo) ([]FileInfo, error) {
 	return result, nil
 }
 
-func smallHashFiles(candidates []FileInfo, byteLen int, sleep time.Duration) ([]FileInfo, error) {
+func abs(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) ([]FileInfo, error) {
 	// For byteLen, <0 means head, >0 means tail
 	// abs(byteLen) should always be small enough that fully creating the buffer is fine
 	var result []FileInfo
@@ -142,21 +151,15 @@ func smallHashFiles(candidates []FileInfo, byteLen int, sleep time.Duration) ([]
 	}
 	for _, f := range candidates {
 		time.Sleep(sleep)
-		var readSize int
+		readSize := abs(byteLen)
 		seek := int64(0)
-		if byteLen > 0 {
-			if f.size <= int64(byteLen) {
-				readSize = int(f.size)
-			} else {
-				readSize = byteLen
-			}
-		} else {
-			if f.size <= int64(byteLen)*-1 {
-				readSize = int(f.size)
-			} else {
-				readSize = byteLen * -1
-				seek = int64(byteLen)
-			}
+		// Limit ourselves to readonly only the whole file
+		if f.size <= readSize {
+			readSize = f.size
+			seek = 0
+		} else if byteLen < 0 {
+			// If not whole file, and we're tailing, prepare to seek
+			seek = byteLen
 		}
 		buffer := make([]byte, readSize)
 		handle, err := os.Open(f.path)
@@ -165,7 +168,7 @@ func smallHashFiles(candidates []FileInfo, byteLen int, sleep time.Duration) ([]
 			continue
 		}
 		defer handle.Close()
-		if seek != 0 {
+		if seek < 0 {
 			handle.Seek(seek, 2)
 		}
 		readTotal, err := handle.Read(buffer)
@@ -173,20 +176,23 @@ func smallHashFiles(candidates []FileInfo, byteLen int, sleep time.Duration) ([]
 			f.Logger().Error(err)
 			continue
 		}
-		if readTotal != readSize {
+		if int64(readTotal) != readSize {
 			f.Logger().Error("Could not read full file")
 		}
+		// Check original param for head/tail
 		if byteLen > 0 {
 			f.headBytesHash = crc64.Checksum(buffer, table)
+			if readSize == f.size {
+				f.tailBytesHash = f.headBytesHash
+				f.fullHash = f.headBytesHash
+			}
 		} else {
 			f.tailBytesHash = crc64.Checksum(buffer, table)
+			if readSize == f.size {
+				f.headBytesHash = f.headBytesHash
+				f.fullHash = f.headBytesHash
+			}
 		}
-
-		// If we read the full file, pre-fill the other values
-		// if f.size <= int64(readSize) {
-		// 	f.tailBytesHash = f.headBytesHash
-		// 	f.fullHash = f.headBytesHash
-		// }
 		result = append(result, f)
 	}
 	return result, nil
