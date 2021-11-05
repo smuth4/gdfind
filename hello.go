@@ -77,7 +77,7 @@ func main() {
 			// No dupes
 			continue
 		}
-		log.Infof("Path %s has dupes", files[0].path)
+		log.Infof("Path %s has %d dupe(s)", files[0].path, len(files)-1)
 		for _, dupe := range files[1:] {
 			log.Info(dupe.path)
 		}
@@ -208,7 +208,7 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 		buffer := make([]byte, readSize)
 		handle, err := os.Open(f.path)
 		if err != nil {
-			f.Logger().Error(err)
+			f.Logger().Errorf("Could not open file: %s", err)
 			continue
 		}
 		defer handle.Close()
@@ -217,7 +217,7 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 		}
 		readTotal, err := handle.Read(buffer)
 		if err != nil {
-			f.Logger().Error(err)
+			f.Logger().Error("Could not read file: %s", err)
 			continue
 		}
 		if int64(readTotal) != readSize {
