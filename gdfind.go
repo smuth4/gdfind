@@ -115,10 +115,21 @@ func main() {
 				// No dupes
 				continue
 			}
+			source := files[0].path
 			for _, dupe := range files[1:] {
+				target := dupe.path
 				if dryRun {
-					fmt.Println("os.Remove('" + dupe.path + "')")
-					fmt.Println("os.Link('" + files[0].path + "', '" + dupe.path + "')")
+					fmt.Println("os.Remove('" + target + "')")
+					fmt.Println("os.Link('" + source + "', '" + target + "')")
+				} else {
+					err = os.Remove(dupe.path)
+					if err != nil {
+						dupe.Logger().Errorf("Error unlinking: %s", err)
+					}
+					err = os.Link(files[0].path, dupe.path)
+					if err != nil {
+						dupe.Logger().Errorf("Error linking: %s", err)
+					}
 				}
 			}
 		}
