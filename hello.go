@@ -43,20 +43,27 @@ func main() {
 	}
 
 	// Initial scan
-	candidates, _ := scanDir(flag.Arg(0), minSize, time.Duration(0))
+	var candidates []FileInfo
+	for i := 0; i < flag.NArg(); i++ {
+		dirCandidates, _ := scanDir(flag.Arg(i), minSize, time.Duration(0))
+		candidates = append(candidates, dirCandidates...)
+		candidateLogger(candidates).Infof("Finished scanning '%s'", flag.Arg(i))
+	}
 	log.Infof("Found %d paths, totalling %s", len(candidates), byteToHuman(totalSize(candidates)))
 	candidates, _ = removeUniqueSizes(candidates)
+	candidateLogger(candidates).Infof("Removed unique sizes")
 	candidates, _ = removeDuplicateInodes(candidates)
+	candidateLogger(candidates).Infof("Removed duplicate inodes")
 
 	// Sort by inode
 	log.Debug("Sorting by inode")
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].inode < candidates[j].inode
 	})
-	log.Info("Building head hashes")
+	candidateLogger(candidates).Info("Building head hashes")
 	candidates, _ = smallHashFiles(candidates, headBytes, ioSleep)
 	candidates, _ = removeDuplicateHeadHash(candidates)
-	log.Info("Building tail hashes")
+	candidateLogger(candidates).Info("Removed duplicate head hashes, building tail hashes")
 	candidates, err = smallHashFiles(candidates, tailBytes*-1, ioSleep)
 	if err != nil {
 		log.Fatal(err)
@@ -65,23 +72,34 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Info("Building full hashes")
+	candidateLogger(candidates).Info("Removed duplicate tail hashes, building full hashes")
 	candidates, _ = fullHashFiles(candidates, ioSleep)
 	hashCandidates := make(map[uint64][]FileInfo)
 	for _, f := range candidates {
 		hashCandidates[f.fullHash] = append(hashCandidates[f.fullHash], f)
 	}
 	candidates = nil // no longer needed
+	var actionCandidates []FileInfo
 	for _, files := range hashCandidates {
 		if len(files) == 1 {
 			// No dupes
 			continue
 		}
-		log.Infof("Path %s has %d dupe(s)", files[0].path, len(files)-1)
+		log.Debugf("Path %s has %d dupe(s)", files[0].path, len(files)-1)
 		for _, dupe := range files[1:] {
-			log.Info(dupe.path)
+			actionCandidates = append(actionCandidates, dupe)
+			log.Debug(dupe.path)
 		}
 	}
+	log.Infof("Possible save of %d files, totalling %s", len(actionCandidates), byteToHuman(totalSize(actionCandidates)))
+	switch action {
+	case "none":
+		// Do nothing
+	}
+}
+
+func candidateLogger(candidates []FileInfo) *log.Entry {
+	return log.WithFields(log.Fields{"count": len(candidates), "size": byteToHuman(totalSize(candidates))})
 }
 
 func byteToHuman(b int64) string {
@@ -111,7 +129,6 @@ func removeDuplicateHeadHash(candidates []FileInfo) ([]FileInfo, error) {
 			result = append(result, f)
 		}
 	}
-	log.Infof("Found %d paths after unique head hash check, totalling %s", len(result), byteToHuman(totalSize(result)))
 	return result, nil
 }
 
@@ -129,7 +146,6 @@ func removeDuplicateTailHash(candidates []FileInfo) ([]FileInfo, error) {
 			result = append(result, f)
 		}
 	}
-	log.Infof("Found %d paths after unique tail hash check, totalling %s", len(result), byteToHuman(totalSize(result)))
 	return result, nil
 }
 
@@ -151,6 +167,7 @@ func fullHashFiles(candidates []FileInfo, sleep time.Duration) ([]FileInfo, erro
 			bar.Add64(f.size)
 			continue
 		}
+		bar.Set("prefix", filepath.Base(f.path+" "))
 		time.Sleep(sleep)
 		hasher := crc64.New(table)
 		handle, err := os.Open(f.path)
@@ -164,6 +181,7 @@ func fullHashFiles(candidates []FileInfo, sleep time.Duration) ([]FileInfo, erro
 		f.fullHash = hasher.Sum64()
 		result = append(result, f)
 	}
+	bar.Set("prefix", "")
 	bar.Finish()
 	return result, nil
 }
@@ -177,19 +195,20 @@ func abs(x int64) int64 {
 
 func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) ([]FileInfo, error) {
 	// For byteLen, <0 means head, >0 means tail
-	// abs(byteLen) should always be small enough that fully creating the buffer is fine
+	// abs(byteLen) should always be small enough that fully creating the buffer each time is fine
 	if len(candidates) == 0 {
 		return candidates, nil
 	}
 	var result []FileInfo
-	bar := pb.StartNew(len(candidates))
+	bar := pb.Start64(int64(len(candidates)) * abs(byteLen))
+	bar.Set(pb.Bytes, true)
 	table := crc64.MakeTable(crc64.ECMA)
 	if byteLen == 0 {
 		return nil, errors.New("Cannot read 0 bytes")
 	}
 	for _, f := range candidates {
 		// Check if we even need to do anything
-		bar.Increment()
+		bar.Add64(abs(byteLen)) // This is a slight lie, we a) haven't read anything yet and b) might read less
 		if (byteLen > 0 && f.headBytesHash != 0) || (byteLen < 0 && f.tailBytesHash != 0) {
 			result = append(result, f)
 			continue
@@ -262,7 +281,6 @@ func removeDuplicateInodes(candidates []FileInfo) ([]FileInfo, error) {
 			result = append(result, f)
 		}
 	}
-	log.Infof("Found %d paths after duplicate inode check, totalling %s", len(result), byteToHuman(totalSize(result)))
 	return result, nil
 }
 
@@ -280,7 +298,6 @@ func removeUniqueSizes(candidates []FileInfo) ([]FileInfo, error) {
 			result = append(result, f)
 		}
 	}
-	log.Infof("Found %d paths after unique size check, totalling %s", len(result), byteToHuman(totalSize(result)))
 	return result, nil
 }
 
@@ -327,7 +344,6 @@ func scanDir(path string, minSize int64, sleep time.Duration) ([]FileInfo, error
 			acceptedPaths = append(acceptedPaths, FileInfo{path: subpath, size: info.Size(), inode: stat.Ino})
 			return nil
 		})
-	log.Debugf("Scanned %d entries", totalScanned)
 	if err != nil {
 		log.Error(err)
 		return nil, err
