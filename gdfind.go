@@ -18,13 +18,16 @@ func main() {
 	var minSize, headBytes, tailBytes int64
 	var ioSleep time.Duration
 	var err error
-	var logLevel, action string
-	flag.Int64Var(&minSize, "minsize", 1, "Ignore files with less than N bytes")
-	flag.Int64Var(&headBytes, "head-bytes", 64, "Read N bytes from the start of files")
-	flag.Int64Var(&tailBytes, "tail-bytes", 64, "Read N bytes from the end of files")
+	var dryRun bool
+	var logLevel, action, output string
+	flag.Int64Var(&minSize, "minsize", 1, "Ignore files with less than N `bytes`")
+	flag.Int64Var(&headBytes, "head-bytes", 64, "Read N `bytes` from the start of files")
+	flag.Int64Var(&tailBytes, "tail-bytes", 64, "Read N `bytes` from the end of files")
 	flag.DurationVar(&ioSleep, "sleep", time.Duration(0), "Sleep N long between IO (default 0ms)")
 	flag.StringVar(&logLevel, "level", "info", "Level to use for logs [warn,debug,info,error]")
-	flag.StringVar(&action, "action", "none", "Action use for logs [none,hardlink,symlink,delete]")
+	flag.StringVar(&action, "action", "none", "Action use for handling dupes [none,hardlink,symlink,delete]")
+	flag.StringVar(&output, "output", "", "Write actions to file")
+	flag.BoolVar(&dryRun, "dry-run", false, "Don't actually make any changes, just print actions")
 
 	flag.Parse()
 	switch logLevel {
@@ -43,6 +46,9 @@ func main() {
 		flag.Usage()
 		log.Fatal("No paths provided")
 		os.Exit(1)
+	}
+	if dryRun {
+		log.Info("Running in dry run mode")
 	}
 
 	// Initial scan
@@ -77,6 +83,10 @@ func main() {
 	}
 	candidateLogger(candidates).Info("Removed duplicate tail hashes, building full hashes")
 	candidates, _ = fullHashFiles(candidates, ioSleep)
+	if len(candidates) == 0 {
+		log.Info("No duplicates found!")
+		return
+	}
 	hashCandidates := make(map[uint64][]FileInfo)
 	for _, f := range candidates {
 		hashCandidates[f.fullHash] = append(hashCandidates[f.fullHash], f)
@@ -95,9 +105,23 @@ func main() {
 		}
 	}
 	log.Infof("Possible save of %d files, totalling %s", len(actionCandidates), byteToHuman(totalSize(actionCandidates)))
+	actionCandidates = nil // Just needed the info
 	switch action {
 	case "none":
 		// Do nothing
+	case "hardlink":
+		for _, files := range hashCandidates {
+			if len(files) == 1 {
+				// No dupes
+				continue
+			}
+			for _, dupe := range files[1:] {
+				if dryRun {
+					fmt.Println("os.Remove('" + dupe.path + "')")
+					fmt.Println("os.Link('" + files[0].path + "', '" + dupe.path + "')")
+				}
+			}
+		}
 	}
 }
 
