@@ -202,7 +202,7 @@ func fullHashFiles(candidates []FileInfo, sleep time.Duration) ([]FileInfo, erro
 	if log.IsLevelEnabled(log.InfoLevel) {
 		bar = pb.Start64(totalSize(candidates))
 		bar.Set(pb.Bytes, true)
-		defer func(){
+		defer func() {
 			bar.Set("prefix", "")
 			bar.Finish()
 		}()
@@ -212,10 +212,14 @@ func fullHashFiles(candidates []FileInfo, sleep time.Duration) ([]FileInfo, erro
 		barReader = nil
 		if f.fullHash != 0 {
 			result = append(result, f)
-			if log.IsLevelEnabled(log.InfoLevel) { bar.Add64(f.size) }
+			if log.IsLevelEnabled(log.InfoLevel) {
+				bar.Add64(f.size)
+			}
 			continue
 		}
-		if log.IsLevelEnabled(log.InfoLevel) { bar.Set("prefix", filepath.Base(f.path+" ")) }
+		if log.IsLevelEnabled(log.InfoLevel) {
+			bar.Set("prefix", filepath.Base(f.path+" "))
+		}
 		time.Sleep(sleep)
 		hasher := crc64.New(table)
 		handle, err := os.Open(f.path)
@@ -258,7 +262,7 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 	if log.IsLevelEnabled(log.InfoLevel) {
 		bar = pb.Start64(int64(len(candidates)) * abs(byteLen))
 		bar.Set(pb.Bytes, true)
-		defer func(){
+		defer func() {
 			bar.Finish()
 		}()
 	}
