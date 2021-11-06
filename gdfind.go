@@ -196,22 +196,40 @@ func fullHashFiles(candidates []FileInfo, sleep time.Duration) ([]FileInfo, erro
 		return candidates, nil
 	}
 	var result []FileInfo
+	var bar *pb.ProgressBar
+	var barReader io.Reader
 	table := crc64.MakeTable(crc64.ECMA)
-	bar := pb.Start64(totalSize(candidates))
+	if log.IsLevelEnabled(log.InfoLevel) {
+		bar = pb.Start64(totalSize(candidates))
+		bar.Set(pb.Bytes, true)
+		defer func(){
+			bar.Set("prefix", "")
+			bar.Finish()
+		}()
+	}
 	for _, f := range candidates {
 		// Check if we need to even do anythong
+		barReader = nil
 		if f.fullHash != 0 {
 			result = append(result, f)
-			bar.Add64(f.size)
+			if log.IsLevelEnabled(log.InfoLevel) { bar.Add64(f.size) }
 			continue
 		}
-		bar.Set("prefix", filepath.Base(f.path+" "))
+		if log.IsLevelEnabled(log.InfoLevel) { bar.Set("prefix", filepath.Base(f.path+" ")) }
 		time.Sleep(sleep)
 		hasher := crc64.New(table)
 		handle, err := os.Open(f.path)
-		defer handle.Close()
-		barReader := bar.NewProxyReader(handle)
+		if log.IsLevelEnabled(log.InfoLevel) {
+			barReader = bar.NewProxyReader(handle)
+		} else {
+			barReader = handle
+		}
 		_, err = io.Copy(hasher, barReader)
+		if err != nil {
+			f.Logger().Error(err)
+			continue
+		}
+		handle.Close()
 		if err != nil {
 			f.Logger().Error(err)
 			continue
@@ -219,8 +237,6 @@ func fullHashFiles(candidates []FileInfo, sleep time.Duration) ([]FileInfo, erro
 		f.fullHash = hasher.Sum64()
 		result = append(result, f)
 	}
-	bar.Set("prefix", "")
-	bar.Finish()
 	return result, nil
 }
 
@@ -237,16 +253,24 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 	if len(candidates) == 0 {
 		return candidates, nil
 	}
+	var bar *pb.ProgressBar
 	var result []FileInfo
-	bar := pb.Start64(int64(len(candidates)) * abs(byteLen))
-	bar.Set(pb.Bytes, true)
+	if log.IsLevelEnabled(log.InfoLevel) {
+		bar = pb.Start64(int64(len(candidates)) * abs(byteLen))
+		bar.Set(pb.Bytes, true)
+		defer func(){
+			bar.Finish()
+		}()
+	}
 	table := crc64.MakeTable(crc64.ECMA)
 	if byteLen == 0 {
 		return nil, errors.New("Cannot read 0 bytes")
 	}
 	for _, f := range candidates {
 		// Check if we even need to do anything
-		bar.Add64(abs(byteLen)) // This is a slight lie, we a) haven't read anything yet and b) might read less
+		if log.IsLevelEnabled(log.InfoLevel) {
+			bar.Add64(abs(byteLen)) // This is a slight lie, we a) haven't read anything yet and b) might read less
+		}
 		if (byteLen > 0 && f.headBytesHash != 0) || (byteLen < 0 && f.tailBytesHash != 0) {
 			result = append(result, f)
 			continue
@@ -265,14 +289,15 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 		buffer := make([]byte, readSize)
 		handle, err := os.Open(f.path)
 		if err != nil {
-			f.Logger().Errorf("Could not open file: %s", err)
+			log.Errorf("Could not open file: %s", err)
+			handle.Close()
 			continue
 		}
-		defer handle.Close()
 		if seek < 0 {
 			handle.Seek(seek, 2)
 		}
 		readTotal, err := handle.Read(buffer)
+		handle.Close()
 		if err != nil {
 			f.Logger().Error("Could not read file: %s", err)
 			continue
@@ -296,7 +321,6 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 		}
 		result = append(result, f)
 	}
-	bar.Finish()
 	return result, nil
 }
 
