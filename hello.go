@@ -15,16 +15,18 @@ import log "github.com/sirupsen/logrus"
 import "github.com/cheggaaa/pb/v3"
 
 func main() {
-	var minSize int64
-	var headBytes, tailBytes int64
+	var minSize, headBytes, tailBytes int64
 	var ioSleep time.Duration
 	var err error
-	var logLevel string
+	var logLevel, action string
 	flag.Int64Var(&minSize, "minsize", 1, "Ignore files with less than N bytes")
 	flag.Int64Var(&headBytes, "head-bytes", 64, "Read N bytes from the start of files")
 	flag.Int64Var(&tailBytes, "tail-bytes", 64, "Read N bytes from the end of files")
-	flag.DurationVar(&ioSleep, "sleep", time.Duration(0), "Sleep N milliseconds between IO")
-	flag.StringVar(&logLevel, "level", "info", "Level to use for logs")
+	flag.DurationVar(&ioSleep, "sleep", time.Duration(0), "Sleep N long between IO (default 0ms)")
+	flag.StringVar(&logLevel, "level", "info", "Level to use for logs [warn,debug,info,error]")
+	flag.StringVar(&action, "action", "none", "Action use for logs [none,hardlink,symlink,delete]")
+
+	flag.Parse()
 	switch logLevel {
 	case "warn":
 		log.SetLevel(log.WarnLevel)
@@ -34,8 +36,9 @@ func main() {
 		log.SetLevel(log.InfoLevel)
 	case "error":
 		log.SetLevel(log.ErrorLevel)
+	default:
+		log.Warnf("Unknown log level %s", logLevel)
 	}
-	flag.Parse()
 	if flag.NArg() == 0 {
 		flag.Usage()
 		log.Fatal("No paths provided")
