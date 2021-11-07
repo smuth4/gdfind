@@ -106,18 +106,28 @@ func main() {
 			log.Debug("- ", target)
 			switch action {
 			case "hardlink":
+				targetTmp := target + ".tmp"
 				if dryRun {
 					fmt.Println("os.Remove('" + target + "')")
 					fmt.Println("os.Link('" + source + "', '" + target + "')")
 				} else {
-					err = os.Remove(dupe.path)
+					err = os.Rename(target, targetTmp)
 					if err != nil {
-						dupe.Logger().Errorf("Error unlinking: %s", err)
+						dupe.Logger().Errorf("Could not move to temporary file: %s")
 						continue
 					}
-					err = os.Link(files[0].path, dupe.path)
+					err = os.Link(source, target)
 					if err != nil {
 						dupe.Logger().Errorf("Error linking: %s", err)
+						err = os.Rename(targetTmp, target )
+						if err != nil {
+							dupe.Logger().Errorf("Could not restore temp file: %s")
+						}
+						continue
+					}
+					err = os.Remove(targetTmp)
+					if err != nil {
+						dupe.Logger().Errorf("Error unlinking temp file: %s", err)
 					}
 				}
 			case "none":
