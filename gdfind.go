@@ -58,7 +58,7 @@ func main() {
 		candidates = append(candidates, dirCandidates...)
 		candidateLogger(candidates).Infof("Finished scanning '%s'", flag.Arg(i))
 	}
-	log.Infof("Found %d paths, totalling %s", len(candidates), byteToHuman(totalSize(candidates)))
+	candidateLogger(candidates).Infof("Found scanning all paths")
 	candidates, _ = removeUniqueSizes(candidates)
 	candidateLogger(candidates).Infof("Removed unique sizes")
 	candidates, _ = removeDuplicateInodes(candidates)
@@ -71,17 +71,17 @@ func main() {
 	})
 	candidateLogger(candidates).Info("Building head hashes")
 	candidates, _ = smallHashFiles(candidates, headBytes, ioSleep)
-	candidates, _ = removeDuplicateHeadHash(candidates)
-	candidateLogger(candidates).Info("Removed duplicate head hashes, building tail hashes")
+	candidates, _ = removeUniqueHeadHash(candidates)
+	candidateLogger(candidates).Info("Removed unique hashes, building tail hashes")
 	candidates, err = smallHashFiles(candidates, tailBytes*-1, ioSleep)
 	if err != nil {
 		log.Fatal(err)
 	}
-	candidates, err = removeDuplicateTailHash(candidates)
+	candidates, err = removeUniqueTailHash(candidates)
 	if err != nil {
 		log.Fatal(err)
 	}
-	candidateLogger(candidates).Info("Removed duplicate tail hashes, building full hashes")
+	candidateLogger(candidates).Info("Removed unique hashes, building full hashes")
 	candidates, _ = fullHashFiles(candidates, ioSleep)
 	if len(candidates) == 0 {
 		log.Info("No duplicates found!")
@@ -153,7 +153,7 @@ func byteToHuman(b int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func removeDuplicateHeadHash(candidates []FileInfo) ([]FileInfo, error) {
+func removeUniqueHeadHash(candidates []FileInfo) ([]FileInfo, error) {
 	// Remove unique head hashes
 	var headHashCount = make(map[uint64]int)
 	var result []FileInfo
@@ -170,7 +170,7 @@ func removeDuplicateHeadHash(candidates []FileInfo) ([]FileInfo, error) {
 	return result, nil
 }
 
-func removeDuplicateTailHash(candidates []FileInfo) ([]FileInfo, error) {
+func removeUniqueTailHash(candidates []FileInfo) ([]FileInfo, error) {
 	// Remove unique tail hashes
 	var tailHashCount = make(map[uint64]int)
 	var result []FileInfo
