@@ -230,6 +230,10 @@ func fullHashFiles(candidates []FileInfo, sleep time.Duration) ([]FileInfo, erro
 		time.Sleep(sleep)
 		hasher := crc64.New(table)
 		handle, err := os.Open(f.path)
+		if err != nil {
+			f.Logger().Error(err)
+			continue
+		}
 		if log.IsLevelEnabled(log.InfoLevel) {
 			barReader = bar.NewProxyReader(handle)
 		} else {
@@ -305,7 +309,11 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 			continue
 		}
 		if seek < 0 {
-			handle.Seek(seek, 2)
+			_, err = handle.Seek(seek, 2)
+			if err != nil {
+				log.Errorf("Error seeking: %s", err)
+				continue
+			}
 		}
 		readTotal, err := handle.Read(buffer)
 		handle.Close()
@@ -315,6 +323,7 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 		}
 		if int64(readTotal) != readSize {
 			f.Logger().Error("Could not read full file")
+			continue
 		}
 		// Check original param for head/tail
 		if byteLen > 0 {
