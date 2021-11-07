@@ -382,8 +382,11 @@ func scanDir(path string, minSize int64, sleep time.Duration) ([]FileInfo, error
 		func(subpath string, entry fs.DirEntry, err error) error {
 			pathLogger := log.WithFields(log.Fields{"path": subpath})
 			if err != nil {
-				pathLogger.Error(err)
-				return SkipDir
+				log.Error(err)
+				if entry.IsDir() {
+					return SkipDir
+				}
+				return nil
 			}
 			totalScanned++
 			if entry.IsDir() {
