@@ -98,26 +98,14 @@ func main() {
 			// No dupes
 			continue
 		}
-		log.Debugf("Path %s has %d dupe(s)", files[0].path, len(files)-1)
+		source := files[0].path
+		log.Debugf("Path %s has %d dupe(s)", source, len(files)-1)
 		for _, dupe := range files[1:] {
 			actionCandidates = append(actionCandidates, dupe)
-			log.Debug(dupe.path)
-		}
-	}
-	log.Infof("Possible save of %d files, totalling %s", len(actionCandidates), byteToHuman(totalSize(actionCandidates)))
-	actionCandidates = nil // Just needed the info
-	switch action {
-	case "none":
-		// Do nothing
-	case "hardlink":
-		for _, files := range hashCandidates {
-			if len(files) == 1 {
-				// No dupes
-				continue
-			}
-			source := files[0].path
-			for _, dupe := range files[1:] {
-				target := dupe.path
+			target := dupe.path
+			log.Debug("- ", target)
+			switch action {
+			case "hardlink":
 				if dryRun {
 					fmt.Println("os.Remove('" + target + "')")
 					fmt.Println("os.Link('" + source + "', '" + target + "')")
@@ -125,15 +113,24 @@ func main() {
 					err = os.Remove(dupe.path)
 					if err != nil {
 						dupe.Logger().Errorf("Error unlinking: %s", err)
+						continue
 					}
 					err = os.Link(files[0].path, dupe.path)
 					if err != nil {
 						dupe.Logger().Errorf("Error linking: %s", err)
 					}
 				}
+			case "none":
+				// Do nothing
 			}
 		}
 	}
+	if dryRun || action == "none" {
+		log.Infof("Possible save of %d files, totalling %s", len(actionCandidates), byteToHuman(totalSize(actionCandidates)))
+	} else {
+		log.Infof("Effected %d files (%s) with action '%s'", len(actionCandidates), byteToHuman(totalSize(actionCandidates)), action)
+	}
+	actionCandidates = nil // Just needed the info
 }
 
 func candidateLogger(candidates []FileInfo) *log.Entry {
