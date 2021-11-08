@@ -1,18 +1,19 @@
 package main
 
+import "encoding/csv"
 import "errors"
-import "path/filepath"
-import "syscall"
 import "fmt"
-import "sort"
-import "io/fs"
-import "io"
-import "os"
-import "flag"
 import "hash/crc64"
+import "io"
+import "io/fs"
+import "os"
+import "path/filepath"
+import "sort"
+import "syscall"
 import "time"
-import log "github.com/sirupsen/logrus"
 import "github.com/cheggaaa/pb/v3"
+import flag "github.com/spf13/pflag"
+import log "github.com/sirupsen/logrus"
 
 func main() {
 	var minSize, headBytes, tailBytes int64
@@ -24,10 +25,10 @@ func main() {
 	flag.Int64Var(&headBytes, "head-bytes", 64, "Read N `bytes` from the start of files")
 	flag.Int64Var(&tailBytes, "tail-bytes", 64, "Read N `bytes` from the end of files")
 	flag.DurationVar(&ioSleep, "sleep", time.Duration(0), "Sleep N long between IO (default 0ms)")
-	flag.StringVar(&logLevel, "level", "info", "Level to use for logs [warn,debug,info,error]")
-	flag.StringVar(&action, "action", "none", "Action use for handling dupes [none,hardlink,symlink,delete]")
-	flag.StringVar(&output, "output", "", "Write actions to file")
-	flag.BoolVar(&dryRun, "dry-run", false, "Don't actually make any changes, just print actions")
+	flag.StringVarP(&logLevel, "level", "l", "info", "Level to use for logs [warn,debug,info,error]")
+	flag.StringVarP(&action, "action", "a", "none", "Action use for handling dupes [none,hardlink,symlink,delete]")
+	flag.StringVarP(&output, "output", "o", "", "Write actions to `file`")
+	flag.BoolVarP(&dryRun, "dry-run", "n", false, "Don't actually make any changes, just print actions")
 
 	flag.Parse()
 	switch logLevel {
@@ -130,7 +131,7 @@ func main() {
 		size := int64(0)
 		files := int64(0)
 		for _, file := range actionCandidates {
-			if file.action == action + "-dry-run" || file.action == "none" {
+			if file.action == action+"-dry-run" || file.action == "none" {
 				size += file.size
 				files += 1
 			}
@@ -147,7 +148,28 @@ func main() {
 		}
 		log.Infof("Effected %d files (%s) with action '%s'", files, byteToHuman(size), action)
 	}
-	actionCandidates = nil // Just needed the info
+	if output != "" {
+		var handle *os.File
+		if output == "-" {
+			handle = os.Stdout
+		} else {
+			handle, err = os.Create(output)
+			if err != nil {
+				log.Errorf("Could not open output file: %s", err)
+				return
+			}
+		}
+		defer handle.Close()
+		writer := csv.NewWriter(handle)
+		if err := writer.Write(FileInfoHeaders()); err != nil {
+			log.Errorf("Error writing to output file: %s", err)
+		}
+		writer.Flush()
+		for _, file := range actionCandidates {
+			writer.Write(file.ToCsvSlice())
+		}
+		writer.Flush()
+	}
 }
 
 func hardLink(source FileInfo, target FileInfo) (FileInfo, error) {
@@ -426,6 +448,14 @@ type FileInfo struct {
 	fullHash      uint64
 	priority      int
 	action        string
+}
+
+func (f *FileInfo) ToCsvSlice() []string {
+	return []string{f.path, fmt.Sprintf("%d", f.size), fmt.Sprintf("%x", f.fullHash), f.action}
+}
+
+func FileInfoHeaders() []string {
+	return []string{"path", "size", "hash", "action"}
 }
 
 func scanDir(path string, minSize int64, sleep time.Duration) ([]FileInfo, error) {
