@@ -98,41 +98,30 @@ func main() {
 			// No dupes
 			continue
 		}
+
 		source := files[0].path
 		log.Debugf("Path %s has %d dupe(s)", source, len(files)-1)
 		for _, dupe := range files[1:] {
-			actionCandidates = append(actionCandidates, dupe)
 			target := dupe.path
 			log.Debug("- ", target)
 			switch action {
 			case "hardlink":
-				targetTmp := target + ".tmp"
 				if dryRun {
 					fmt.Println("os.Remove('" + target + "')")
 					fmt.Println("os.Link('" + source + "', '" + target + "')")
+					dupe.action = action + "-dry-run"
 				} else {
-					err = os.Rename(target, targetTmp)
+					_, err = hardLink(files[0], dupe)
 					if err != nil {
-						dupe.Logger().Errorf("Could not move to temporary file: %s")
-						continue
-					}
-					err = os.Link(source, target)
-					if err != nil {
-						dupe.Logger().Errorf("Error linking: %s", err)
-						err = os.Rename(targetTmp, target )
-						if err != nil {
-							dupe.Logger().Errorf("Could not restore temp file: %s")
-						}
-						continue
-					}
-					err = os.Remove(targetTmp)
-					if err != nil {
-						dupe.Logger().Errorf("Error unlinking temp file: %s", err)
+						dupe.action = action + "-error"
+					} else {
+						dupe.action = action
 					}
 				}
 			case "none":
 				// Do nothing
 			}
+			actionCandidates = append(actionCandidates, dupe)
 		}
 	}
 	if dryRun || action == "none" {
@@ -141,6 +130,31 @@ func main() {
 		log.Infof("Effected %d files (%s) with action '%s'", len(actionCandidates), byteToHuman(totalSize(actionCandidates)), action)
 	}
 	actionCandidates = nil // Just needed the info
+}
+
+func hardLink(source FileInfo, target FileInfo) (FileInfo, error) {
+	sourcePath := source.path
+	targetPath := target.path
+	targetPathTmp := targetPath + ".tmp"
+	err := os.Rename(targetPath, targetPathTmp)
+	if err != nil {
+		target.Logger().Errorf("Could not move to temporary file: %s")
+		return target, err
+	}
+	err = os.Link(sourcePath, targetPath)
+	if err != nil {
+		target.Logger().Errorf("Error linking: %s", err)
+		err = os.Rename(targetPathTmp, targetPath)
+		if err != nil {
+			target.Logger().Errorf("Could not restore temp file: %s")
+		}
+		return target, err
+	}
+	err = os.Remove(targetPathTmp)
+	if err != nil {
+		target.Logger().Errorf("Error unlinking temp file: %s", err)
+	}
+	return target, nil
 }
 
 func candidateLogger(candidates []FileInfo) *log.Entry {
@@ -391,6 +405,7 @@ type FileInfo struct {
 	tailBytesHash uint64
 	fullHash      uint64
 	priority      int
+	action        string
 }
 
 func scanDir(path string, minSize int64, sleep time.Duration) ([]FileInfo, error) {
