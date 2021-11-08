@@ -335,7 +335,7 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 	}
 	table := crc64.MakeTable(crc64.ECMA)
 	if byteLen == 0 {
-		return nil, errors.New("Cannot read 0 bytes")
+		return nil, errors.New("cannot read 0 bytes")
 	}
 	for _, f := range candidates {
 		// Check if we even need to do anything
@@ -446,7 +446,6 @@ type FileInfo struct {
 	headBytesHash uint64
 	tailBytesHash uint64
 	fullHash      uint64
-	priority      int
 	action        string
 }
 
