@@ -178,7 +178,7 @@ func hardLink(source FileInfo, target FileInfo) (FileInfo, error) {
 	targetPathTmp := targetPath + ".tmp"
 	err := os.Rename(targetPath, targetPathTmp)
 	if err != nil {
-		target.Logger().Errorf("Could not move to temporary file: %s")
+		target.Logger().Errorf("Could not move to temporary file: %s", err)
 		return target, err
 	}
 	err = os.Link(sourcePath, targetPath)
@@ -186,7 +186,7 @@ func hardLink(source FileInfo, target FileInfo) (FileInfo, error) {
 		target.Logger().Errorf("Error linking: %s", err)
 		err = os.Rename(targetPathTmp, targetPath)
 		if err != nil {
-			target.Logger().Errorf("Could not restore temp file: %s")
+			target.Logger().Errorf("Could not restore temp file: %s", err)
 			return target, err
 		}
 		return target, err
@@ -374,7 +374,7 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 		readTotal, err := handle.Read(buffer)
 		handle.Close()
 		if err != nil {
-			f.Logger().Error("Could not read file: %s", err)
+			f.Logger().Errorf("Could not read file: %s", err)
 			continue
 		}
 		if int64(readTotal) != readSize {
@@ -391,8 +391,8 @@ func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) (
 		} else {
 			f.tailBytesHash = crc64.Checksum(buffer, table)
 			if readSize == f.size {
-				f.headBytesHash = f.headBytesHash
-				f.fullHash = f.headBytesHash
+				f.headBytesHash = f.tailBytesHash
+				f.fullHash = f.tailBytesHash
 			}
 		}
 		result = append(result, f)
