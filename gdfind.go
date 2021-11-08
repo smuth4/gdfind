@@ -98,9 +98,11 @@ func main() {
 			// No dupes
 			continue
 		}
-
-		source := files[0].path
+		origin := files[0]
+		source := origin.path
 		log.Debugf("Path %s has %d dupe(s)", source, len(files)-1)
+		origin.action = "originfile"
+		actionCandidates = append(actionCandidates, origin)
 		for _, dupe := range files[1:] {
 			target := dupe.path
 			log.Debug("- ", target)
@@ -119,15 +121,31 @@ func main() {
 					}
 				}
 			case "none":
-				// Do nothing
+				dupe.action = "none"
 			}
 			actionCandidates = append(actionCandidates, dupe)
 		}
 	}
 	if dryRun || action == "none" {
-		log.Infof("Possible save of %d files, totalling %s", len(actionCandidates), byteToHuman(totalSize(actionCandidates)))
+		size := int64(0)
+		files := int64(0)
+		for _, file := range actionCandidates {
+			if file.action == action + "-dry-run" || file.action == "none" {
+				size += file.size
+				files += 1
+			}
+		}
+		log.Infof("Possible save of %d files, totalling %s", files, byteToHuman(size))
 	} else {
-		log.Infof("Effected %d files (%s) with action '%s'", len(actionCandidates), byteToHuman(totalSize(actionCandidates)), action)
+		size := int64(0)
+		files := int64(0)
+		for _, file := range actionCandidates {
+			if file.action == action {
+				size += file.size
+				files += 1
+			}
+		}
+		log.Infof("Effected %d files (%s) with action '%s'", files, byteToHuman(size), action)
 	}
 	actionCandidates = nil // Just needed the info
 }
@@ -147,12 +165,14 @@ func hardLink(source FileInfo, target FileInfo) (FileInfo, error) {
 		err = os.Rename(targetPathTmp, targetPath)
 		if err != nil {
 			target.Logger().Errorf("Could not restore temp file: %s")
+			return target, err
 		}
 		return target, err
 	}
 	err = os.Remove(targetPathTmp)
 	if err != nil {
 		target.Logger().Errorf("Error unlinking temp file: %s", err)
+		return target, err
 	}
 	return target, nil
 }
