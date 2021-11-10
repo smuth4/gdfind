@@ -11,8 +11,8 @@ import "path/filepath"
 import "sort"
 import "syscall"
 import "time"
+import "flag"
 import "github.com/cheggaaa/pb/v3"
-import flag "github.com/spf13/pflag"
 import log "github.com/sirupsen/logrus"
 
 func main() {
@@ -25,10 +25,10 @@ func main() {
 	flag.Int64Var(&headBytes, "head-bytes", 64, "Read N `bytes` from the start of files")
 	flag.Int64Var(&tailBytes, "tail-bytes", 64, "Read N `bytes` from the end of files")
 	flag.DurationVar(&ioSleep, "sleep", time.Duration(0), "Sleep N long between IO (default 0ms)")
-	flag.StringVarP(&logLevel, "level", "l", "info", "Level to use for logs [warn,debug,info,error]")
-	flag.StringVarP(&action, "action", "a", "none", "Action use for handling dupes [none,hardlink,symlink,delete]")
-	flag.StringVarP(&output, "output", "o", "", "Write actions to `file`")
-	flag.BoolVarP(&dryRun, "dry-run", "n", false, "Don't actually make any changes, just print actions")
+	flag.StringVar(&logLevel, "level", "info", "Level to use for logs [warn,debug,info,error]")
+	flag.StringVar(&action, "action", "none", "Action use for handling dupes [none,hardlink,symlink,delete]")
+	flag.StringVar(&output, "output", "", "Write actions to `file`")
+	flag.BoolVar(&dryRun, "dry-run", false, "Don't actually make any changes, just print actions")
 
 	flag.Parse()
 	switch logLevel {
