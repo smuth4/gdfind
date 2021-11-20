@@ -110,8 +110,8 @@ func main() {
 			switch action {
 			case "hardlink":
 				if dryRun {
-					fmt.Println("os.Remove('" + target + "')")
-					fmt.Println("os.Link('" + source + "', '" + target + "')")
+					log.Debug("os.Remove('" + target + "')")
+					log.Debug("os.Link('" + source + "', '" + target + "')")
 					dupe.action = action + "-dry-run"
 				} else {
 					_, err = hardLink(files[0], dupe)
@@ -133,7 +133,7 @@ func main() {
 		for _, file := range actionCandidates {
 			if file.action == action+"-dry-run" || file.action == "none" {
 				size += file.size
-				files += 1
+				files++
 			}
 		}
 		log.Infof("Possible save of %d files, totalling %s", files, byteToHuman(size))
@@ -143,7 +143,7 @@ func main() {
 		for _, file := range actionCandidates {
 			if file.action == action {
 				size += file.size
-				files += 1
+				files++
 			}
 		}
 		log.Infof("Effected %d files (%s) with action '%s'", files, byteToHuman(size), action)
@@ -163,10 +163,13 @@ func main() {
 		writer := csv.NewWriter(handle)
 		if err := writer.Write(FileInfoHeaders()); err != nil {
 			log.Errorf("Error writing to output file: %s", err)
+			return
 		}
 		writer.Flush()
 		for _, file := range actionCandidates {
-			writer.Write(file.ToCsvSlice())
+			if err := writer.Write(file.ToCsvSlice()); err != nil {
+				log.Errorf("Error writing to output file: %s", err)
+			}
 		}
 		writer.Flush()
 	}
@@ -449,8 +452,8 @@ type FileInfo struct {
 	action        string
 }
 
-func (f *FileInfo) ToCsvSlice() []string {
-	return []string{f.path, fmt.Sprintf("%d", f.size), fmt.Sprintf("%x", f.fullHash), f.action}
+func (file *FileInfo) ToCsvSlice() []string {
+	return []string{file.path, fmt.Sprintf("%d", file.size), fmt.Sprintf("%x", file.fullHash), file.action}
 }
 
 func FileInfoHeaders() []string {
@@ -458,7 +461,6 @@ func FileInfoHeaders() []string {
 }
 
 func scanDir(path string, minSize int64, sleep time.Duration) ([]FileInfo, error) {
-	var SkipDir error = fs.SkipDir
 	var acceptedPaths []FileInfo
 	var totalScanned int64
 	err := filepath.WalkDir(path,
@@ -467,7 +469,7 @@ func scanDir(path string, minSize int64, sleep time.Duration) ([]FileInfo, error
 			if err != nil {
 				log.Error(err)
 				if entry.IsDir() {
-					return SkipDir
+					return fs.SkipDir
 				}
 				return nil
 			}
