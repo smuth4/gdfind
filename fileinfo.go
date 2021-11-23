@@ -287,7 +287,6 @@ func (cache FileInfoCache) Save() error {
 		handle.Close()
 	}()
 	enc := gob.NewEncoder(handle)
-	log.Debugf("Saving %d files to cache", len(cache.Files))
 	if err = enc.Encode(cache.Files); err != nil {
 		log.Error("Could not encode cache data: ", err)
 		return err
