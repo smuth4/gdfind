@@ -1,18 +1,10 @@
 package main
 
 import "encoding/csv"
-import "errors"
 import "fmt"
-import "hash/crc64"
-import "io"
-import "io/fs"
 import "os"
-import "path/filepath"
-import "sort"
-import "syscall"
 import "time"
 import "flag"
-import "github.com/cheggaaa/pb/v3"
 import log "github.com/sirupsen/logrus"
 
 func main() {
@@ -20,7 +12,7 @@ func main() {
 	var ioSleep time.Duration
 	var err error
 	var dryRun bool
-	var logLevel, action, output string
+	var logLevel, action, output, cachePath string
 	flag.Int64Var(&minSize, "minsize", 1, "Ignore files with less than N `bytes`")
 	flag.Int64Var(&headBytes, "head-bytes", 64, "Read N `bytes` from the start of files")
 	flag.Int64Var(&tailBytes, "tail-bytes", 64, "Read N `bytes` from the end of files")
@@ -28,6 +20,7 @@ func main() {
 	flag.StringVar(&logLevel, "level", "info", "Level to use for logs [warn,debug,info,error]")
 	flag.StringVar(&action, "action", "none", "Action use for handling dupes [none,hardlink,symlink,delete]")
 	flag.StringVar(&output, "output", "", "Write actions to `file`")
+	flag.StringVar(&cachePath, "cache", "", "Cache data to `file`")
 	flag.BoolVar(&dryRun, "dry-run", false, "Don't actually make any changes, just print actions")
 
 	flag.Parse()
@@ -53,61 +46,68 @@ func main() {
 	}
 
 	// Initial scan
-	var candidates []FileInfo
+	var candidates []string      // A list of paths of potential candidates
+	cache := NewCache(cachePath) // Holds the interesting file information, may not actually make it to the disk
+
 	for i := 0; i < flag.NArg(); i++ {
-		dirCandidates, err := scanDir(flag.Arg(i), minSize, time.Duration(0))
+		dirCandidates, err := cache.ScanDir(flag.Arg(i), minSize, time.Duration(0))
 		if err == nil {
 			candidates = append(candidates, dirCandidates...)
-			candidateLogger(candidates).Infof("Finished scanning '%s'", flag.Arg(i))
+			candidateLogger(*cache, candidates).Infof("Finished scanning '%s'", flag.Arg(i))
 		}
 	}
-	candidateLogger(candidates).Infof("Found scanning all paths")
-	candidates, _ = removeUniqueSizes(candidates)
-	candidateLogger(candidates).Infof("Removed unique sizes")
-	candidates, _ = removeDuplicateInodes(candidates)
-	candidateLogger(candidates).Infof("Removed duplicate inodes")
+	candidateLogger(*cache, candidates).Infof("Found scanning all paths")
+	candidates, _ = removeUniqueSizes(*cache, candidates)
+	candidateLogger(*cache, candidates).Infof("Removed unique sizes")
+	candidates, _ = removeDuplicateInodes(*cache, candidates)
+	candidateLogger(*cache, candidates).Infof("Removed duplicate inodes")
 
 	// Sort by inode
-	log.Debug("Sorting by inode")
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].inode < candidates[j].inode
-	})
-	candidateLogger(candidates).Info("Building head hashes")
-	candidates, _ = smallHashFiles(candidates, headBytes, ioSleep)
-	candidates, _ = removeUniqueHeadHash(candidates)
-	candidateLogger(candidates).Info("Removed unique hashes, building tail hashes")
-	candidates, err = smallHashFiles(candidates, tailBytes*-1, ioSleep)
+	//log.Debug("Sorting by inode")
+	//sort.Slice(candidates, func(i, j int) bool {
+	//	return candidates[i].Inode < candidates[j].Inode
+	//})
+	candidateLogger(*cache, candidates).Info("Building head hashes")
+	candidates, err = cache.SmallHash(candidates, headBytes, ioSleep)
+	cache.Save()
+	if err != nil {
+		log.Error(err)
+	}
+	candidates, _ = removeUniqueHeadHash(*cache, candidates)
+	candidateLogger(*cache, candidates).Info("Removed unique hashes, building tail hashes")
+	candidates, err = cache.SmallHash(candidates, tailBytes*-1, ioSleep)
+	cache.Save()
+	if err != nil {
+		log.Error(err)
+	}
+	candidates, err = removeUniqueTailHash(*cache, candidates)
 	if err != nil {
 		log.Fatal(err)
 	}
-	candidates, err = removeUniqueTailHash(candidates)
-	if err != nil {
-		log.Fatal(err)
-	}
-	candidateLogger(candidates).Info("Removed unique hashes, building full hashes")
-	candidates, _ = fullHashFiles(candidates, ioSleep)
+	candidateLogger(*cache, candidates).Info("Removed unique hashes, building full hashes")
+	candidates, _ = cache.FullHashFiles(candidates, ioSleep)
+	cache.Save()
 	if len(candidates) == 0 {
 		log.Info("No duplicates found!")
 		return
 	}
-	hashCandidates := make(map[uint64][]FileInfo)
+	hashCandidates := make(map[uint64][]string)
 	for _, f := range candidates {
-		hashCandidates[f.fullHash] = append(hashCandidates[f.fullHash], f)
+		hashCandidates[cache.Files[f].FullHash] = append(hashCandidates[cache.Files[f].FullHash], f)
 	}
-	candidates = nil // no longer needed
 	var actionCandidates []FileInfo
 	for _, files := range hashCandidates {
 		if len(files) == 1 {
 			// No dupes
 			continue
 		}
-		origin := files[0]
-		source := origin.path
+		source := files[0]
+		origin := cache.Files[source]
 		log.Debugf("Path %s has %d dupe(s)", source, len(files)-1)
 		origin.action = "originfile"
 		actionCandidates = append(actionCandidates, origin)
-		for _, dupe := range files[1:] {
-			target := dupe.path
+		for _, target := range files[1:] {
+			dupe := cache.Files[target]
 			log.Debug("- ", target)
 			switch action {
 			case "hardlink":
@@ -116,7 +116,7 @@ func main() {
 					log.Debug("os.Link('" + source + "', '" + target + "')")
 					dupe.action = action + "-dry-run"
 				} else {
-					_, err = hardLink(files[0], dupe)
+					err = hardLink(source, target)
 					if err != nil {
 						dupe.action = action + "-error"
 					} else {
@@ -134,7 +134,7 @@ func main() {
 		files := int64(0)
 		for _, file := range actionCandidates {
 			if file.action == action+"-dry-run" || file.action == "none" {
-				size += file.size
+				size += file.Size
 				files++
 			}
 		}
@@ -144,7 +144,7 @@ func main() {
 		files := int64(0)
 		for _, file := range actionCandidates {
 			if file.action == action {
-				size += file.size
+				size += file.Size
 				files++
 			}
 		}
@@ -177,35 +177,35 @@ func main() {
 	}
 }
 
-func hardLink(source FileInfo, target FileInfo) (FileInfo, error) {
-	sourcePath := source.path
-	targetPath := target.path
+func hardLink(sourcePath string, targetPath string) error {
 	targetPathTmp := targetPath + ".tmp"
 	err := os.Rename(targetPath, targetPathTmp)
 	if err != nil {
-		target.Logger().Errorf("Could not move to temporary file: %s", err)
-		return target, err
+		log.Errorf("Could not move to temporary file: %s", err)
+		return err
 	}
 	err = os.Link(sourcePath, targetPath)
 	if err != nil {
-		target.Logger().Errorf("Error linking: %s", err)
+		log.Errorf("Error linking: %s", err)
 		err = os.Rename(targetPathTmp, targetPath)
 		if err != nil {
-			target.Logger().Errorf("Could not restore temp file: %s", err)
-			return target, err
+			log.Errorf("Could not restore temp file: %s", err)
+			return err
 		}
-		return target, err
+		return err
 	}
 	err = os.Remove(targetPathTmp)
 	if err != nil {
-		target.Logger().Errorf("Error unlinking temp file: %s", err)
-		return target, err
+		log.Errorf("Error unlinking temp file: %s", err)
+		return err
 	}
-	return target, nil
+	return nil
 }
 
-func candidateLogger(candidates []FileInfo) *log.Entry {
-	return log.WithFields(log.Fields{"count": len(candidates), "size": byteToHuman(totalSize(candidates))})
+func candidateLogger(cache FileInfoCache, candidates []string) *log.Entry {
+	length := len(candidates)
+	size := byteToHuman(totalSize(cache, candidates))
+	return log.WithFields(log.Fields{"count": length, "size": size})
 }
 
 func byteToHuman(b int64) string {
@@ -221,16 +221,16 @@ func byteToHuman(b int64) string {
 	return fmt.Sprintf("%.2f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func removeUniqueHeadHash(candidates []FileInfo) ([]FileInfo, error) {
+func removeUniqueHeadHash(cache FileInfoCache, candidates []string) ([]string, error) {
 	// Remove unique head hashes
 	var headHashCount = make(map[uint64]int)
-	var result []FileInfo
+	var result []string
 	for _, f := range candidates {
-		headHashCount[f.headBytesHash]++
+		headHashCount[cache.Files[f].HeadBytesHash]++
 	}
 	for _, f := range candidates {
-		if headHashCount[f.headBytesHash] == 1 {
-			f.Logger().Debug("Removing unique head hash")
+		if headHashCount[cache.Files[f].HeadBytesHash] == 1 {
+			Logger(f).Debug("Removing unique head hash")
 		} else {
 			result = append(result, f)
 		}
@@ -238,16 +238,16 @@ func removeUniqueHeadHash(candidates []FileInfo) ([]FileInfo, error) {
 	return result, nil
 }
 
-func removeUniqueTailHash(candidates []FileInfo) ([]FileInfo, error) {
+func removeUniqueTailHash(cache FileInfoCache, candidates []string) ([]string, error) {
 	// Remove unique tail hashes
 	var tailHashCount = make(map[uint64]int)
-	var result []FileInfo
+	var result []string
 	for _, f := range candidates {
-		tailHashCount[f.tailBytesHash]++
+		tailHashCount[cache.Files[f].TailBytesHash]++
 	}
 	for _, f := range candidates {
-		if tailHashCount[f.tailBytesHash] == 1 {
-			f.Logger().Debug("Removing unique tail hash")
+		if tailHashCount[cache.Files[f].TailBytesHash] == 1 {
+			Logger(f).Debug("Removing unique tail hash")
 		} else {
 			result = append(result, f)
 		}
@@ -255,65 +255,8 @@ func removeUniqueTailHash(candidates []FileInfo) ([]FileInfo, error) {
 	return result, nil
 }
 
-func (file FileInfo) Logger() *log.Entry {
-	return log.WithFields(log.Fields{"path": file.path})
-}
-
-func fullHashFiles(candidates []FileInfo, sleep time.Duration) ([]FileInfo, error) {
-	if len(candidates) == 0 {
-		return candidates, nil
-	}
-	var result []FileInfo
-	var bar *pb.ProgressBar
-	var barReader io.Reader
-	table := crc64.MakeTable(crc64.ECMA)
-	if log.IsLevelEnabled(log.InfoLevel) {
-		bar = pb.Start64(totalSize(candidates))
-		bar.Set(pb.Bytes, true)
-		defer func() {
-			bar.Set("prefix", "")
-			bar.Finish()
-		}()
-	}
-	for _, f := range candidates {
-		// Check if we need to even do anythong
-		barReader = nil
-		if f.fullHash != 0 {
-			result = append(result, f)
-			if log.IsLevelEnabled(log.InfoLevel) {
-				bar.Add64(f.size)
-			}
-			continue
-		}
-		if log.IsLevelEnabled(log.InfoLevel) {
-			bar.Set("prefix", filepath.Base(f.path+" "))
-		}
-		time.Sleep(sleep)
-		hasher := crc64.New(table)
-		handle, err := os.Open(f.path)
-		if err != nil {
-			f.Logger().Error(err)
-			continue
-		}
-		if log.IsLevelEnabled(log.InfoLevel) {
-			barReader = bar.NewProxyReader(handle)
-		} else {
-			barReader = handle
-		}
-		_, err = io.Copy(hasher, barReader)
-		if err != nil {
-			f.Logger().Error(err)
-			continue
-		}
-		handle.Close()
-		if err != nil {
-			f.Logger().Error(err)
-			continue
-		}
-		f.fullHash = hasher.Sum64()
-		result = append(result, f)
-	}
-	return result, nil
+func Logger(path string) *log.Entry {
+	return log.WithFields(log.Fields{"path": path})
 }
 
 func abs(x int64) int64 {
@@ -323,192 +266,50 @@ func abs(x int64) int64 {
 	return x
 }
 
-func smallHashFiles(candidates []FileInfo, byteLen int64, sleep time.Duration) ([]FileInfo, error) {
-	// For byteLen, <0 means head, >0 means tail
-	// abs(byteLen) should always be small enough that fully creating the buffer each time is fine
-	if len(candidates) == 0 {
-		return candidates, nil
-	}
-	var bar *pb.ProgressBar
-	var result []FileInfo
-	if log.IsLevelEnabled(log.InfoLevel) {
-		bar = pb.Start64(int64(len(candidates)) * abs(byteLen))
-		bar.Set(pb.Bytes, true)
-		defer func() {
-			bar.Finish()
-		}()
-	}
-	table := crc64.MakeTable(crc64.ECMA)
-	if byteLen == 0 {
-		return nil, errors.New("cannot read 0 bytes")
-	}
-	for _, f := range candidates {
-		// Check if we even need to do anything
-		if log.IsLevelEnabled(log.InfoLevel) {
-			bar.Add64(abs(byteLen)) // This is a slight lie, we a) haven't read anything yet and b) might read less
-		}
-		if (byteLen > 0 && f.headBytesHash != 0) || (byteLen < 0 && f.tailBytesHash != 0) {
-			result = append(result, f)
-			continue
-		}
-		time.Sleep(sleep)
-		readSize := abs(byteLen)
-		seek := int64(0)
-		// Limit ourselves to readonly only the whole file
-		if f.size <= readSize {
-			readSize = f.size
-			seek = 0
-		} else if byteLen < 0 {
-			// If not whole file, and we're tailing, prepare to seek
-			seek = byteLen
-		}
-		buffer := make([]byte, readSize)
-		handle, err := os.Open(f.path)
-		if err != nil {
-			log.Errorf("Could not open file: %s", err)
-			handle.Close()
-			continue
-		}
-		if seek < 0 {
-			_, err = handle.Seek(seek, 2)
-			if err != nil {
-				log.Errorf("Error seeking: %s", err)
-				continue
-			}
-		}
-		readTotal, err := handle.Read(buffer)
-		handle.Close()
-		if err != nil {
-			f.Logger().Errorf("Could not read file: %s", err)
-			continue
-		}
-		if int64(readTotal) != readSize {
-			f.Logger().Error("Could not read full file")
-			continue
-		}
-		// Check original param for head/tail
-		if byteLen > 0 {
-			f.headBytesHash = crc64.Checksum(buffer, table)
-			if readSize == f.size {
-				f.tailBytesHash = f.headBytesHash
-				f.fullHash = f.headBytesHash
-			}
-		} else {
-			f.tailBytesHash = crc64.Checksum(buffer, table)
-			if readSize == f.size {
-				f.headBytesHash = f.tailBytesHash
-				f.fullHash = f.tailBytesHash
-			}
-		}
-		result = append(result, f)
-	}
-	return result, nil
-}
-
-func totalSize(paths []FileInfo) int64 {
+func totalSize(cache FileInfoCache, paths []string) int64 {
 	totalSize := int64(0)
 	for _, f := range paths {
-		totalSize += f.size
+		totalSize += cache.Files[f].Size
 	}
 	return totalSize
 }
 
-func removeDuplicateInodes(candidates []FileInfo) ([]FileInfo, error) {
+func removeDuplicateInodes(cache FileInfoCache, candidates []string) ([]string, error) {
 	var countInodes = make(map[uint64]bool)
-	var result []FileInfo
+	var result []string
 	for _, f := range candidates {
-		if countInodes[f.inode] {
-			f.Logger().Debug("Skipping duplicate inode")
+		inode := cache.Files[f].Inode
+		if countInodes[inode] {
+			Logger(f).Debug("Skipping duplicate inode")
 		} else {
-			countInodes[f.inode] = true
+			countInodes[inode] = true
 			result = append(result, f)
 		}
 	}
 	return result, nil
 }
 
-func removeUniqueSizes(candidates []FileInfo) ([]FileInfo, error) {
+func removeUniqueSizes(cache FileInfoCache, candidates []string) ([]string, error) {
 	// Remove unique sizes
-	var result []FileInfo
+	var result []string
 	var countSizes = make(map[int64]int)
 	for _, f := range candidates {
-		countSizes[f.size]++
+		countSizes[cache.Files[f].Size]++
 	}
 	for _, f := range candidates {
-		if countSizes[f.size] == 1 {
-			f.Logger().Debug("Skipping due to unique size")
+		if countSizes[cache.Files[f].Size] == 1 {
+			Logger(f).Debug("Skipping due to unique size")
 		} else {
 			result = append(result, f)
 		}
 	}
 	return result, nil
-}
-
-type FileInfo struct {
-	path          string
-	size          int64
-	inode         uint64
-	headBytesHash uint64
-	tailBytesHash uint64
-	fullHash      uint64
-	action        string
 }
 
 func (file *FileInfo) ToCsvSlice() []string {
-	return []string{file.path, fmt.Sprintf("%d", file.size), fmt.Sprintf("%x", file.fullHash), file.action}
+	return []string{fmt.Sprintf("%d", file.Size), fmt.Sprintf("%x", file.FullHash), file.action}
 }
 
 func FileInfoHeaders() []string {
 	return []string{"path", "size", "hash", "action"}
-}
-
-func scanDir(path string, minSize int64, sleep time.Duration) ([]FileInfo, error) {
-	var acceptedPaths []FileInfo
-	var totalScanned int64
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		log.Errorf("Path %s does not exist", path)
-		return nil, err
-	}
-	if ! info.IsDir() {
-		log.Errorf("Path %s is not a directory", path)
-		return acceptedPaths, nil
-	}
-	err = filepath.WalkDir(path,
-		func(subpath string, entry fs.DirEntry, err error) error {
-			pathLogger := log.WithFields(log.Fields{"path": subpath})
-			if err != nil {
-				log.Error(err)
-				if entry.IsDir() {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			totalScanned++
-			if entry.IsDir() {
-				return nil
-			}
-			info, _ := entry.Info()
-			if info.Size() < minSize {
-				pathLogger.Debugf("Skipping file smaller than %d byte(s)", minSize)
-				return nil
-			}
-			if info.Mode()&os.ModeSymlink != 0 {
-				pathLogger.Debug("Skipping symlink")
-				return nil
-			}
-			time.Sleep(sleep)
-			stat, ok := info.Sys().(*syscall.Stat_t)
-			if !ok {
-				pathLogger.Error("Could not stat()")
-				return nil
-			}
-			acceptedPaths = append(acceptedPaths, FileInfo{path: subpath, size: info.Size(), inode: stat.Ino})
-			return nil
-		})
-	if err != nil {
-		log.Error(err)
-		return nil, err
-	}
-	return acceptedPaths, nil
 }
