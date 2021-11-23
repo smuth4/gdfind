@@ -70,14 +70,14 @@ func main() {
 	})
 	candidateLogger(*cache, candidates).Info("Building head hashes")
 	candidates, err = cache.SmallHash(candidates, headBytes, ioSleep)
-	cache.Save()
+	_ = cache.Save()
 	if err != nil {
 		log.Error(err)
 	}
 	candidates, _ = removeUniqueHeadHash(*cache, candidates)
 	candidateLogger(*cache, candidates).Info("Removed unique hashes, building tail hashes")
 	candidates, err = cache.SmallHash(candidates, tailBytes*-1, ioSleep)
-	cache.Save()
+	_ = cache.Save()
 	if err != nil {
 		log.Error(err)
 	}
@@ -87,7 +87,9 @@ func main() {
 	}
 	candidateLogger(*cache, candidates).Info("Removed unique hashes, building full hashes")
 	candidates, _ = cache.FullHashFiles(candidates, ioSleep)
-	cache.Save()
+	if err = cache.Save(); err != nil {
+		log.Error("Could not save cache: ", err)
+	}
 	if len(candidates) == 0 {
 		log.Info("No duplicates found!")
 		return

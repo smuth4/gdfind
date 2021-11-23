@@ -44,7 +44,13 @@ func NewCache(path string) *FileInfoCache {
 			handle.Close()
 		}()
 		dec := json.NewDecoder(handle)
-		dec.Decode(&files)
+		if err = dec.Decode(&files); err != nil {
+			log.Error("Could not decode cache file: ", err)
+			return &FileInfoCache{
+				Path:  path,
+				Files: files,
+			}
+		}
 	}
 	log.Debugf("Loaded %d files from cache %s", len(files), path)
 	return &FileInfoCache{
@@ -227,7 +233,6 @@ func (cache FileInfoCache) FullHashFiles(candidates []string, sleep time.Duratio
 		}()
 	}
 	for _, f := range candidates {
-		barReader = nil
 		info := cache.Files[f]
 		// Check if we need to even do anythong
 		if info.FullHash != 0 {
@@ -264,7 +269,7 @@ func (cache FileInfoCache) FullHashFiles(candidates []string, sleep time.Duratio
 		}
 		info.FullHash = hasher.Sum64()
 		cache.AddEntry(f, info)
-		cache.Save() // This probably will be horrendous with lots of small files, but that's what -sleep and -minsize are for
+		_ = cache.Save() // This probably will be horrendous with lots of small files the first time around, but that's what -sleep and -minsize are for
 		result = append(result, f)
 	}
 	return result, nil
