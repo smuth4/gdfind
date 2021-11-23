@@ -3,7 +3,7 @@ package main
 import log "github.com/sirupsen/logrus"
 import "hash/crc64"
 import "errors"
-import "encoding/json"
+import "encoding/gob"
 import "github.com/cheggaaa/pb/v3"
 import "os"
 import "syscall"
@@ -43,7 +43,7 @@ func NewCache(path string) *FileInfoCache {
 		defer func() {
 			handle.Close()
 		}()
-		dec := json.NewDecoder(handle)
+		dec := gob.NewDecoder(handle)
 		if err = dec.Decode(&files); err != nil {
 			log.Error("Could not decode cache file: ", err)
 			return &FileInfoCache{
@@ -286,7 +286,7 @@ func (cache FileInfoCache) Save() error {
 	defer func() {
 		handle.Close()
 	}()
-	enc := json.NewEncoder(handle)
+	enc := gob.NewEncoder(handle)
 	log.Debugf("Saving %d files to cache", len(cache.Files))
 	if err = enc.Encode(cache.Files); err != nil {
 		log.Error("Could not encode cache data: ", err)
