@@ -55,9 +55,11 @@ func main() {
 	// Initial scan
 	var candidates []FileInfo
 	for i := 0; i < flag.NArg(); i++ {
-		dirCandidates, _ := scanDir(flag.Arg(i), minSize, time.Duration(0))
-		candidates = append(candidates, dirCandidates...)
-		candidateLogger(candidates).Infof("Finished scanning '%s'", flag.Arg(i))
+		dirCandidates, err := scanDir(flag.Arg(i), minSize, time.Duration(0))
+		if err == nil {
+			candidates = append(candidates, dirCandidates...)
+			candidateLogger(candidates).Infof("Finished scanning '%s'", flag.Arg(i))
+		}
 	}
 	candidateLogger(candidates).Infof("Found scanning all paths")
 	candidates, _ = removeUniqueSizes(candidates)
