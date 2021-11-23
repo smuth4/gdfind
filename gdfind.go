@@ -465,7 +465,16 @@ func FileInfoHeaders() []string {
 func scanDir(path string, minSize int64, sleep time.Duration) ([]FileInfo, error) {
 	var acceptedPaths []FileInfo
 	var totalScanned int64
-	err := filepath.WalkDir(path,
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		log.Errorf("Path %s does not exist", path)
+		return nil, err
+	}
+	if ! info.IsDir() {
+		log.Errorf("Path %s is not a directory", path)
+		return acceptedPaths, nil
+	}
+	err = filepath.WalkDir(path,
 		func(subpath string, entry fs.DirEntry, err error) error {
 			pathLogger := log.WithFields(log.Fields{"path": subpath})
 			if err != nil {
