@@ -20,7 +20,7 @@ func main() {
 	flag.StringVar(&logLevel, "level", "info", "Level to use for logs [warn,debug,info,error]")
 	flag.StringVar(&action, "action", "none", "Action use for handling dupes [none,hardlink,symlink,delete]")
 	flag.StringVar(&output, "output", "", "Write actions to `file`")
-	flag.StringVar(&cachePath, "cache", "", "Cache data to `file`")
+	flag.StringVar(&cachePath, "cache", "", "Cache data to `file`. Note that changing -{head,tail}-bytes does not yyet properly invalidate the cache")
 	flag.BoolVar(&dryRun, "dry-run", false, "Don't actually make any changes, just print actions")
 
 	flag.Parse()
