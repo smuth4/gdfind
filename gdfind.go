@@ -1,6 +1,7 @@
 package main
 
 import "encoding/csv"
+import "sort"
 import "fmt"
 import "os"
 import "time"
@@ -63,10 +64,10 @@ func main() {
 	candidateLogger(*cache, candidates).Infof("Removed duplicate inodes")
 
 	// Sort by inode
-	//log.Debug("Sorting by inode")
-	//sort.Slice(candidates, func(i, j int) bool {
-	//	return candidates[i].Inode < candidates[j].Inode
-	//})
+	log.Debug("Sorting by inode")
+	sort.Slice(candidates, func(i, j int) bool {
+		return cache.Files[candidates[i]].Inode < cache.Files[candidates[j]].Inode
+	})
 	candidateLogger(*cache, candidates).Info("Building head hashes")
 	candidates, err = cache.SmallHash(candidates, headBytes, ioSleep)
 	cache.Save()
